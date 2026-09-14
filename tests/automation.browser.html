@@ -12,7 +12,7 @@ const fetcher=async url=>({ok:true,json:async()=>url.endsWith('/otp')?{data:{url
 const boundary=1768000020;
 const rows=Array.from({length:500},(_,i)=>({time:boundary-(500-i)*60,open:100+i,close:100+i,high:101+i,low:99+i,volume:null}));
 const candidate={symbol:'R_10',name:'Volatility 10',family:'Continuous Volatility Indices',rows};
-const config={...automationDefaults,maxTrades:1};
+const config={...automationDefaults,maxTrades:1,granularity:60};
 function fixture(overrides={}){
  const map=new Map(),requests=[],events=[];
  const storage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k)};
@@ -29,7 +29,7 @@ function fixture(overrides={}){
   if(p.proposal_open_contract)return {proposal_open_contract:{contract_id:123,is_sold:1,profit:.95}};
   throw new Error('Unexpected '+JSON.stringify(p));
  }};
- const engine=new DemoAutomation({client,accountId:'DEMO123',currency:'USD',storage,scan:async()=>({boundary,ranking:[candidate]}),scanCurrent:async({symbol,name,family})=>({...candidate,symbol,name,family,boundary,granularity:60}),wait:async()=>{},onEvent:e=>events.push(e)});
+ const engine=new DemoAutomation({client,accountId:'DEMO123',currency:'USD',storage,scan:async({granularity=60}={})=>({boundary,granularity,ranking:[candidate]}),scanCurrent:async({symbol,name,family,granularity=60})=>({...candidate,symbol,name,family,boundary,granularity}),wait:async()=>{},onEvent:e=>events.push(e)});
  return {engine,requests,events,storage};
 }
 try{
@@ -83,7 +83,9 @@ try{
   ok(!error.message.includes(credentials.token),'Vazou token');
  });
  await test('Limites e valores inválidos',async()=>{
-  for(const update of [{stake:NaN},{stake:6},{maxTrades:0},{duration:0},{minADX:101},{stake:1.001}])await rejects(()=>validateAutomation({...config,...update}),/./);
+  for(const update of [{stake:NaN},{stake:6},{maxTrades:0},{duration:0},{granularity:120},{minADX:101},{stake:1.001}])await rejects(()=>validateAutomation({...config,...update}),/./);
+  const {granularity,...legacy}=config;
+  ok(validateAutomation(legacy).granularity===0,'Configuração antiga sem tempo quebrou');
  });
  await test('Sinais de alta, baixa e família excluída',()=>{
   ok(entrySignal(candidate,config)==='CALL','Alta ausente');
@@ -151,6 +153,48 @@ try{
   ok(buys===3&&settled.length===3&&f.engine.profit===.75,'Liquidações ou total incorretos');
   ok(new Set(entered).size===3&&scans===1&&currentScans===2,'Repetiu ranking completo ou uma entrada no mesmo candle');
   ok(!f.engine.pending()&&!f.engine.busy,'Sessão não foi encerrada');
+ });
+ await test('Automação usa o tempo de candle configurado',async()=>{
+  const granularity=300;
+  let now=boundary+5,scanGranularity=null,currentGranularity=null,contracts=0;
+  const f=fixture({
+   time:async()=>({time:now}),
+   proposal:async()=>({proposal:{id:'quote',ask_price:1,spot_time:now}}),
+   buy:async()=>({buy:{contract_id:++contracts}}),
+   proposal_open_contract:async p=>{
+    now=Math.floor(now/granularity)*granularity+granularity+5;
+    return {proposal_open_contract:{contract_id:p.contract_id,is_sold:1,profit:.25}};
+   }
+  });
+  f.engine.wait=async ms=>{now+=ms/1000};
+  f.engine.scan=async({granularity:g})=>{
+   scanGranularity=g;
+   const currentBoundary=Math.floor(now/granularity)*granularity;
+   return {boundary:currentBoundary,granularity:g,ranking:[{...candidate,rows:rows.map(r=>({...r,time:r.time+currentBoundary-boundary}))}]};
+  };
+  f.engine.scanCurrent=async({symbol,name,family,granularity:g})=>{
+   currentGranularity=g;
+   const currentBoundary=Math.floor(now/granularity)*granularity;
+   return {...candidate,symbol,name,family,boundary:currentBoundary,granularity:g,rows:rows.map(r=>({...r,time:r.time+currentBoundary-boundary}))};
+  };
+  await f.engine.run({...config,maxTrades:2,granularity});
+  ok(scanGranularity===granularity,'Busca inicial ignorou o tempo configurado');
+  ok(f.events.find(e=>e.opened)?.chart.granularity===granularity,'Gráfico recebeu tempo incorreto');
+  ok(currentGranularity===granularity,'Reavaliação ignorou o tempo configurado');
+ });
+ await test('Automação automática escolhe o melhor tempo',async()=>{
+  const scanned=[];
+  const f=fixture();
+  f.engine.scan=async({granularity})=>{
+   scanned.push(granularity);
+   const currentBoundary=Math.floor((boundary+5)/granularity)*granularity;
+   const tuned=granularity===900 ? rows.map(r=>({...r,open:r.close-.5})) : rows.map(r=>({...r,open:r.close+.5}));
+   return {boundary:currentBoundary,granularity,ranking:[{...candidate,symbol:'R_'+granularity,adx:granularity===300?95:80,rows:tuned.map(r=>({...r,time:r.time+currentBoundary-boundary}))}]};
+  };
+  await f.engine.run({...config,granularity:0});
+  ok(scanned.join(',')==='60,300,900,3600','Não comparou todos os tempos');
+  ok(f.requests.find(p=>p.proposal)?.underlying_symbol==='R_900','Não escolheu o melhor tempo pelo score');
+  ok(f.events.find(e=>e.opened)?.chart.granularity===900,'Tempo escolhido não foi enviado ao gráfico');
  });
  await test('Saldo insuficiente impede compra',async()=>{
   const f=fixture({balance:async()=>({balance:{balance:0,currency:'USD'}})});

@@ -63,7 +63,8 @@ $('accountForm').addEventListener('submit', async e => {
 $('startAutomation').addEventListener('click', async () => {
   if (!connected || busy) return;
   try {
-    const config = validateAutomation(Object.fromEntries(Object.keys(automationDefaults).map(k=>[k,Number($('auto-'+k).value)])));
+    const input = Object.fromEntries(Object.keys(automationDefaults).map(k=>[k,Number($('auto-'+k).value)]));
+    const config = validateAutomation(input);
     if (!navigator.locks) throw new Error('Use um navegador com suporte a bloqueio de sessão (Web Locks) no endereço local.');
     busy = true;
     runRequested = true;

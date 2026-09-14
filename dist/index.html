@@ -20,7 +20,7 @@
 </section>
 <section class="panel automation-panel" aria-labelledby="automationTitle">
 <div class="section-head"><div><p class="eyebrow">AUTOMAÇÃO · CONTA DEMO</p><h2 id="automationTitle">Operações automáticas com saldo virtual</h2></div><span class="badge">Somente demo</span></div>
-<p class="muted">Continuous Volatility, Jump e Step: análise de 500 candles fechados de 1 minuto. A entrada exige ADX/DMI e EMAs 20/50 alinhados, confirmação de MACD e RSI e volatilidade dentro dos limites de ATR. Bollinger e direção do corpo do candle complementam o score mínimo de 75/100. A seleção prioriza o score, com desempate pelo ADX. Score não é probabilidade de acerto. Estratégia experimental, somente demo.</p>
+<p class="muted">Continuous Volatility, Jump e Step: análise de 500 candles fechados. No modo automático, compara 1m, 5m, 15m e 1h e escolhe o melhor sinal pelo score de confluência, com desempate pelo ADX. A entrada exige ADX/DMI alinhado com a EMA, confirmação de MACD, RSI do lado da direção e volatilidade filtrada pelo ATR. Score não é probabilidade de acerto. Estratégia experimental, somente demo.</p>
 <form id="accountForm"><fieldset id="accountFields" class="automation-fields"><legend>Conectar conta demo de Options</legend>
 <p class="muted">As credenciais são lidas do arquivo .env pelo servidor local. O navegador recebe apenas uma conexão temporária de uso único.</p>
 <button id="connectAccount" class="secondary" type="submit">Conectar conta demo</button>
@@ -33,9 +33,13 @@
 <div class="field"><label for="auto-takeProfit">Meta de ganho</label><input id="auto-takeProfit" type="number" min="0.01" step="0.01" value="5"></div>
 <div class="field"><label for="auto-maxTrades">Máximo de operações</label><input id="auto-maxTrades" type="number" min="1" max="100" step="1" value="10"></div>
 <div class="field"><label for="auto-duration">Duração do contrato (min)</label><input id="auto-duration" type="number" min="1" max="60" step="1" value="1"></div>
+<div class="field"><label for="auto-granularity">Tempo dos candles</label><select id="auto-granularity"><option value="0" selected>Automático</option><option value="60">1 minuto</option><option value="300">5 minutos</option><option value="900">15 minutos</option><option value="3600">1 hora</option></select></div>
 <div class="field"><label for="auto-minADX">ADX mínimo</label><input id="auto-minADX" type="number" min="1" max="100" value="25"></div>
+<div class="field"><label for="auto-martingale">Martingale</label><select id="auto-martingale"><option value="0" selected>Desligado</option><option value="1">Ligado</option></select></div>
+<div class="field"><label for="auto-martingaleMultiplier">Multiplicador</label><input id="auto-martingaleMultiplier" type="number" min="1.1" max="5" step="0.1" value="2"></div>
+<div class="field"><label for="auto-martingaleMaxSteps">Máximo de passos</label><input id="auto-martingaleMaxSteps" type="number" min="1" max="10" step="1" value="2"></div>
 </fieldset>
-<p class="muted">Uma operação por vez. A perda considera também o valor da próxima entrada. Parar impede novas compras e acompanha a operação já enviada até a liquidação. Mantenha esta página e o computador ativos; fechar a página interrompe o robô, mas não cancela contratos na Deriv.</p>
+<p class="muted">Uma operação por vez. A perda considera também o valor da próxima entrada, inclusive martingale quando ligado. Parar impede novas compras e acompanha a operação já enviada até a liquidação. Mantenha esta página e o computador ativos; fechar a página interrompe o robô, mas não cancela contratos na Deriv.</p>
 <div class="deriv-controls"><button id="startAutomation" class="primary" disabled>Iniciar sessão demo</button><button id="stopAutomation" class="secondary" disabled>Parar novas entradas</button><button id="disconnectAccount" class="secondary" disabled>Desconectar</button></div>
 <p id="automationStatus" role="status" aria-live="polite">Aguardando conexão.</p><p id="automationTotals" class="muted">Operações: 0 · Resultado da sessão: 0</p>
 <details><summary>Conferir compra pendente após interrupção</summary><p class="muted">Se houve compra sem confirmação, confira o histórico e as posições na plataforma Deriv. Este botão só libera uma nova sessão depois que você confirmar a conferência e a API não apontar posições abertas.</p><label><input type="checkbox" id="pendingChecked"> Conferi o histórico e as posições na Deriv.</label> <button id="clearPending" class="secondary" disabled>Concluir conferência</button></details>
