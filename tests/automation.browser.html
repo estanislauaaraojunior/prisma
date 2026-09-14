@@ -29,7 +29,7 @@ function fixture(overrides={}){
   if(p.proposal_open_contract)return {proposal_open_contract:{contract_id:123,is_sold:1,profit:.95}};
   throw new Error('Unexpected '+JSON.stringify(p));
  }};
- const engine=new DemoAutomation({client,accountId:'DEMO123',currency:'USD',storage,scan:async()=>({boundary,ranking:[candidate]}),wait:async()=>{},onEvent:e=>events.push(e)});
+ const engine=new DemoAutomation({client,accountId:'DEMO123',currency:'USD',storage,scan:async()=>({boundary,ranking:[candidate]}),scanCurrent:async({symbol,name,family})=>({...candidate,symbol,name,family,boundary,granularity:60}),wait:async()=>{},onEvent:e=>events.push(e)});
  return {engine,requests,events,storage};
 }
 try{
@@ -119,7 +119,7 @@ try{
   ok(f.engine.profit===.95&&f.engine.trades===1&&!f.engine.pending(),'Resultado incorreto');
  });
  await test('Sessão com várias liquidações aguarda o próximo candle',async()=>{
-  let now=boundary+5,active=null,buys=0,scans=0;
+  let now=boundary+5,active=null,buys=0,scans=0,currentScans=0;
   const entered=[], settled=[];
   const f=fixture({
    time:async()=>({time:now}),
@@ -143,9 +143,13 @@ try{
    scans++;const currentBoundary=Math.floor(now/60)*60;
    return {boundary:currentBoundary,ranking:[{...candidate,rows:rows.map(r=>({...r,time:r.time+currentBoundary-boundary}))}]};
   };
+  f.engine.scanCurrent=async({symbol,name,family})=>{
+   currentScans++;const currentBoundary=Math.floor(now/60)*60;
+   return {...candidate,symbol,name,family,boundary:currentBoundary,granularity:60,rows:rows.map(r=>({...r,time:r.time+currentBoundary-boundary}))};
+  };
   await f.engine.run({...config,maxTrades:3});
   ok(buys===3&&settled.length===3&&f.engine.profit===.75,'Liquidações ou total incorretos');
-  ok(new Set(entered).size===3&&scans===3,'Repetiu uma entrada no mesmo candle');
+  ok(new Set(entered).size===3&&scans===1&&currentScans===2,'Repetiu ranking completo ou uma entrada no mesmo candle');
   ok(!f.engine.pending()&&!f.engine.busy,'Sessão não foi encerrada');
  });
  await test('Saldo insuficiente impede compra',async()=>{
