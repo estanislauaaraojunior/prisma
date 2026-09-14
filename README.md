@@ -2,12 +2,12 @@
 
 Prisma e um laboratorio local para observar candles historicos, calcular indicadores tecnicos e, opcionalmente, executar uma automacao experimental de contratos Alta/Baixa na Deriv usando somente conta demo de Options.
 
-O sistema roda no proprio computador com Node.js e arquivos estaticos em `dist/`. A pagina inicial funciona com uma serie matematica sem moeda real, permite importar CSV localmente e pode consultar dados publicos da Deriv para comparar indices sinteticos.
+O sistema roda no proprio computador com Node.js e arquivos estaticos em `dist/`. Tambem esta publicado no Firebase Hosting em `https://prisma-b4c64.web.app`. A pagina inicial funciona com uma serie matematica sem moeda real, permite importar CSV localmente e pode consultar dados publicos da Deriv para comparar indices sinteticos.
 
 ## Componentes
 
 - `iniciar.mjs`: servidor HTTP local em `127.0.0.1`, carrega `.env` e expoe o endpoint local `/api/deriv/account-socket` para autenticar a conta demo sem enviar o token ao navegador.
-- `functions/index.js`: Cloud Function em Node.js com o mesmo endpoint para uso no Firebase Hosting.
+- `functions/index.js`: Cloud Function em Node.js 22 com o mesmo endpoint para uso no Firebase Hosting.
 - `firebase.json`: publica `dist/` no Firebase Hosting e redireciona `/api/deriv/account-socket` para a Cloud Function.
 - `dist/index.html`: interface principal.
 - `dist/app.mjs`: importacao CSV, controles da analise, graficos, ranking publico da Deriv e troca do grafico para o simbolo do contrato aberto.
@@ -108,6 +108,11 @@ As paginas usam respostas simuladas e nao enviam ordens reais.
 
 O deploy usa Firebase Hosting para os arquivos de `dist/` e Cloud Functions para o endpoint autenticado da Deriv.
 
+- Projeto Firebase: `prisma-b4c64`
+- Site publicado: `https://prisma-b4c64.web.app`
+- Function: `derivAccountSocket` em `us-central1`, runtime `nodejs22`
+- Rewrite: `/api/deriv/account-socket` para a Function
+
 Configure os secrets antes do deploy:
 
 ```sh
@@ -119,4 +124,16 @@ Depois publique:
 
 ```sh
 firebase deploy --only functions,hosting
+```
+
+Para publicar somente mudancas no site:
+
+```sh
+firebase deploy --only hosting
+```
+
+Para publicar somente mudancas na Function:
+
+```sh
+firebase deploy --only functions
 ```

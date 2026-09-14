@@ -1,22 +1,34 @@
 # Prisma local
 
-Esta cópia contém a página atual com identificação de ativo, importação local de CSV, gráficos e cálculos sem IA. O exemplo inicial é uma série matemática, sem moeda real. A busca na Deriv consulta dados públicos pela API, sem login ou token. A seção de automação permite executar contratos de Alta/Baixa exclusivamente em conta demo de Options, mediante autenticação e início manual da sessão.
+Esta cópia contém a página atual com identificação de ativo, importação local de CSV, gráficos e cálculos sem IA. O exemplo inicial é uma série matemática, sem moeda real. A busca na Deriv consulta dados públicos pela API, sem login ou token. A seção de automação permite executar contratos de Alta/Baixa exclusivamente em conta demo de Options, mediante autenticação e início manual da sessão. A versão publicada está em https://prisma-b4c64.web.app.
 
 ## Requisito
 
-Node.js 18 ou superior e um navegador moderno. Não é necessário instalar bibliotecas externas para rodar localmente. O exemplo e a importação CSV funcionam sem internet. A consulta à Deriv requer internet.
+Node.js 18 ou superior para rodar localmente; a Cloud Function publicada usa Node.js 22. Também é necessário um navegador moderno. Não é necessário instalar bibliotecas externas para rodar localmente. O exemplo e a importação CSV funcionam sem internet. A consulta à Deriv requer internet.
 
 ## Abrir
 
 1. Extraia o ZIP. Abra a pasta prisma-local que contém `iniciar.mjs`.
 2. Abra um terminal nessa pasta.
 3. Execute `npm start`.
-5. Acesse http://127.0.0.1:8000 no navegador.
+4. Acesse http://127.0.0.1:8000 no navegador.
 
 Mantenha o terminal aberto enquanto usa a página. Encerre com Ctrl+C.
 Se a porta estiver ocupada, use `npm start -- --porta 8001` e abra http://127.0.0.1:8001.
 
 Abra a página pelo endereço local, pois módulos JavaScript podem não carregar ao clicar diretamente no index.html.
+
+## Abrir no Firebase
+
+Acesse https://prisma-b4c64.web.app. O Firebase Hosting serve os arquivos de `dist/` e redireciona `/api/deriv/account-socket` para a Cloud Function `derivAccountSocket` em `us-central1`.
+
+Para publicar novamente:
+
+```sh
+firebase deploy --only functions,hosting --project prisma-b4c64
+```
+
+Se mudar somente arquivos do site, use `firebase deploy --only hosting --project prisma-b4c64`. Se mudar somente `functions/index.js` ou `functions/package.json`, use `firebase deploy --only functions --project prisma-b4c64`.
 
 ## Seus dados
 
