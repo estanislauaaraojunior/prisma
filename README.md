@@ -2,11 +2,13 @@
 
 Prisma e um laboratorio local para observar candles historicos, calcular indicadores tecnicos e, opcionalmente, executar uma automacao experimental de contratos Alta/Baixa na Deriv usando somente conta demo de Options.
 
-O sistema roda no proprio computador com Python e arquivos estaticos em `dist/`. A pagina inicial funciona com uma serie matematica sem moeda real, permite importar CSV localmente e pode consultar dados publicos da Deriv para comparar indices sinteticos.
+O sistema roda no proprio computador com Node.js e arquivos estaticos em `dist/`. A pagina inicial funciona com uma serie matematica sem moeda real, permite importar CSV localmente e pode consultar dados publicos da Deriv para comparar indices sinteticos.
 
 ## Componentes
 
-- `iniciar.py`: servidor HTTP local em `127.0.0.1`, carrega `.env` e expoe o endpoint local `/api/deriv/account-socket` para autenticar a conta demo sem enviar o token ao navegador.
+- `iniciar.mjs`: servidor HTTP local em `127.0.0.1`, carrega `.env` e expoe o endpoint local `/api/deriv/account-socket` para autenticar a conta demo sem enviar o token ao navegador.
+- `functions/index.js`: Cloud Function em Node.js com o mesmo endpoint para uso no Firebase Hosting.
+- `firebase.json`: publica `dist/` no Firebase Hosting e redireciona `/api/deriv/account-socket` para a Cloud Function.
 - `dist/index.html`: interface principal.
 - `dist/app.mjs`: importacao CSV, controles da analise, graficos, ranking publico da Deriv e troca do grafico para o simbolo do contrato aberto.
 - `dist/math.mjs`: parsing de candles, validacoes e calculos de EMA, RSI, ATR, DMI/ADX, MACD, Bollinger e VWAP por candles.
@@ -18,14 +20,14 @@ O sistema roda no proprio computador com Python e arquivos estaticos em `dist/`.
 
 ## Como Executar
 
-1. Instale Python 3.
-2. Na pasta do projeto, rode `python3 iniciar.py`.
+1. Instale Node.js 18 ou superior.
+2. Na pasta do projeto, rode `npm start`.
 3. Abra `http://127.0.0.1:8000`.
 
 Se a porta estiver ocupada, use outra:
 
 ```sh
-python3 iniciar.py --porta 8001
+npm start -- --porta 8001
 ```
 
 A pagina deve ser aberta pelo servidor local. Abrir `dist/index.html` diretamente pode impedir o carregamento dos modulos JavaScript.
@@ -46,7 +48,7 @@ Para conectar:
 2. Gere um token PAT com permissao `trade`.
 3. Copie `.env.example` para `.env`.
 4. Preencha `DERIV_APP_ID` e `DERIV_TOKEN`.
-5. Inicie `python3 iniciar.py` e clique em `Conectar conta demo`.
+5. Inicie `npm start` e clique em `Conectar conta demo`.
 
 O token fica no servidor local e e usado apenas em requisicoes HTTPS para localizar uma conta demo ativa e pedir uma URL WebSocket OTP de uso unico. O navegador recebe a URL temporaria e o ID da conta demo selecionada.
 
@@ -54,24 +56,26 @@ O token fica no servidor local e e usado apenas em requisicoes HTTPS para locali
 
 1. O usuario conecta a conta demo e inicia manualmente a sessao.
 2. A interface usa Web Locks para evitar duas sessoes na mesma conta no mesmo navegador/origem.
-3. O motor valida entrada, perda maxima, meta, maximo de operacoes, duracao e ADX minimo.
+3. O motor valida entrada, perda maxima, meta, maximo de operacoes, duracao, ADX minimo e configuracao de martingale.
 4. Antes de operar, consulta `portfolio` e bloqueia a sessao se houver contrato aberto na conta.
-5. A cada novo candle de 1 minuto, procura um sinal nas tres familias autorizadas.
-6. Para cada candidato, calcula ADX/DMI e EMA com os parametros padrao.
-7. Abre `CALL` quando `+DI > -DI` e o fechamento esta acima da EMA.
-8. Abre `PUT` quando `-DI > +DI` e o fechamento esta abaixo da EMA.
+5. A cada novo candle, procura um sinal nas tres familias autorizadas. No modo automatico, compara 1m, 5m, 15m e 1h e escolhe o melhor tempo pelo score de confluencia, com desempate pelo ADX.
+6. Para cada candidato, calcula ADX/DMI, EMA, MACD, RSI e ATR com os parametros padrao.
+7. Abre `CALL` quando `+DI > -DI`, o fechamento esta acima da EMA, o MACD confirma alta, o RSI esta em zona compradora e o ATR esta dentro do limite de volatilidade.
+8. Abre `PUT` quando `-DI > +DI`, o fechamento esta abaixo da EMA, o MACD confirma baixa, o RSI esta em zona vendedora e o ATR esta dentro do limite de volatilidade.
 9. Consulta `contracts_for` e so continua se existir contrato intraday Alta/Baixa compativel com a duracao configurada.
 10. Verifica novamente portfolio e saldo.
-11. Solicita uma cotacao `proposal` com `basis: "stake"`, valor fixo da entrada, moeda da conta, duracao em minutos e simbolo escolhido.
+11. Solicita uma cotacao `proposal` com `basis: "stake"`, valor da proxima entrada, moeda da conta, duracao em minutos e simbolo escolhido.
 12. Revalida o horario: a cotacao precisa pertencer ao candle atual e ter `spot_time` recente.
 13. Grava uma pendencia no `localStorage` antes de enviar `buy`.
 14. Envia uma unica compra com `buy: quote.id` e `price` igual a entrada configurada.
 15. Salva o `contract_id`, atualiza o grafico para o simbolo comprado e acompanha `proposal_open_contract` ate `is_sold = 1`.
 16. Ao liquidar, soma o lucro/prejuizo da sessao, remove a pendencia e decide se continua ou encerra pelos limites.
 
-Depois da primeira compra, se o contrato liquidar e a tendencia continuar na mesma direcao, o sistema reavalia primeiro o mesmo simbolo. O ranking completo so e consultado novamente quando a tendencia muda, perde forca suficiente para o ADX minimo ou o contrato deixa de ser compativel.
+Depois da primeira compra, se o contrato liquidar e a tendencia continuar na mesma direcao com a mesma confluencia de MACD, RSI e ATR, o sistema reavalia primeiro o mesmo simbolo. O ranking completo so e consultado novamente quando a tendencia muda, perde forca suficiente para o ADX minimo, perde confluencia ou o contrato deixa de ser compativel.
 
-Nao ha martingale, aumento automatico de stake, operacao simultanea, conta real, transferencia, saque, assinatura WebSocket, repeticao automatica de compra incerta, backtest de rentabilidade ou calculo de probabilidade de acerto.
+O martingale e opcional e vem desligado por padrao. Quando ligado, uma liquidacao negativa aumenta a proxima entrada pelo multiplicador configurado, limitada ao numero maximo de passos; uma liquidacao positiva reseta a entrada para o valor base. O limite de perda considera tambem essa proxima entrada aumentada.
+
+Nao ha operacao simultanea, conta real, transferencia, saque, assinatura WebSocket, repeticao automatica de compra incerta, backtest de rentabilidade ou calculo de probabilidade de acerto.
 
 ## Pendencias e Falhas
 
@@ -90,7 +94,7 @@ node --test tests/math.test.mjs
 Testes no navegador:
 
 ```sh
-python3 -m http.server 8002 --bind 127.0.0.1
+npm start -- --porta 8002
 ```
 
 Depois abra:
@@ -99,3 +103,20 @@ Depois abra:
 - `http://127.0.0.1:8002/tests/automation.browser.html`
 
 As paginas usam respostas simuladas e nao enviam ordens reais.
+
+## Firebase
+
+O deploy usa Firebase Hosting para os arquivos de `dist/` e Cloud Functions para o endpoint autenticado da Deriv.
+
+Configure os secrets antes do deploy:
+
+```sh
+firebase functions:secrets:set DERIV_APP_ID
+firebase functions:secrets:set DERIV_TOKEN
+```
+
+Depois publique:
+
+```sh
+firebase deploy --only functions,hosting
+```

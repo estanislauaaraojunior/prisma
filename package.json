@@ -1,0 +1,14 @@
+{
+  "name": "prisma",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node iniciar.mjs",
+    "dev": "node iniciar.mjs",
+    "test": "node --test tests/math.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "hosting": {
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/deriv/account-socket",
+        "function": {
+          "functionId": "derivAccountSocket",
+          "region": "us-central1"
+        }
+      }
+    ]
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default"
+    }
+  ]
+}

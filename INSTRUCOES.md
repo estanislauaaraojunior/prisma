@@ -4,18 +4,17 @@ Esta cópia contém a página atual com identificação de ativo, importação l
 
 ## Requisito
 
-Python 3 instalado e um navegador moderno. Não é necessário instalar bibliotecas Python ou pacotes npm. O exemplo e a importação CSV funcionam sem internet. A consulta à Deriv requer internet.
+Node.js 18 ou superior e um navegador moderno. Não é necessário instalar bibliotecas externas para rodar localmente. O exemplo e a importação CSV funcionam sem internet. A consulta à Deriv requer internet.
 
 ## Abrir
 
-1. Extraia o ZIP. Abra a pasta prisma-local que contém iniciar.py.
+1. Extraia o ZIP. Abra a pasta prisma-local que contém `iniciar.mjs`.
 2. Abra um terminal nessa pasta.
-3. Linux/macOS: execute `python3 iniciar.py`.
-4. Windows: execute `py iniciar.py` (ou `python iniciar.py`, conforme a instalação).
+3. Execute `npm start`.
 5. Acesse http://127.0.0.1:8000 no navegador.
 
 Mantenha o terminal aberto enquanto usa a página. Encerre com Ctrl+C.
-Se a porta estiver ocupada, use `python3 iniciar.py --porta 8001` e abra http://127.0.0.1:8001. No Windows, substitua python3 por py.
+Se a porta estiver ocupada, use `npm start -- --porta 8001` e abra http://127.0.0.1:8001.
 
 Abra a página pelo endereço local, pois módulos JavaScript podem não carregar ao clicar diretamente no index.html.
 
@@ -48,7 +47,7 @@ A conexão do ranking usa `wss://api.derivws.com/trading/v1/options/ws/public` e
 
 ## Testes no navegador
 
-Sem Node.js, execute `python3 -m http.server 8002 --bind 127.0.0.1` na pasta do projeto e abra `http://127.0.0.1:8002/tests/deriv.browser.html`. A página executa os testes matemáticos existentes, testes da integração com respostas simuladas e verifica a interface. O resultado deve começar com `PASS`. Encerre esse servidor ao terminar; para o uso normal, continue usando `iniciar.py`.
+Execute `npm start -- --porta 8002` na pasta do projeto e abra `http://127.0.0.1:8002/tests/deriv.browser.html`. A página executa os testes matemáticos existentes, testes da integração com respostas simuladas e verifica a interface. O resultado deve começar com `PASS`. Encerre esse servidor ao terminar; para o uso normal, continue usando `npm start`.
 
 ## Automação em conta demo
 
@@ -57,7 +56,7 @@ A automação opera somente as três famílias autorizadas. Conta real é recusa
 ### Conectar
 
 1. No portal https://developers.deriv.com, registre uma aplicação do tipo PAT e gere um token com permissão `trade`. Esta integração utiliza a API atual: App IDs e tokens antigos não são intercambiáveis.
-2. Copie `.env.example` para `.env` e preencha **DERIV_APP_ID** e **DERIV_TOKEN** (token PAT). O arquivo `.env` fica fora do Git. Ao iniciar com `python3 iniciar.py`, o servidor local usa essas credenciais para consultar `GET /trading/v1/options/accounts` e localizar automaticamente uma conta demo de Options ativa. A conta MT5 não serve para este fluxo.
+2. Copie `.env.example` para `.env` e preencha **DERIV_APP_ID** e **DERIV_TOKEN** (token PAT). O arquivo `.env` fica fora do Git. Ao iniciar com `npm start`, o servidor local usa essas credenciais para consultar `GET /trading/v1/options/accounts` e localizar automaticamente uma conta demo de Options ativa. A conta MT5 não serve para este fluxo.
 3. Clique em **Conectar conta demo**. O sistema utiliza internamente o ID da conta localizada para pedir uma URL autenticada de uso único (OTP), verifica que ela aponta para o ambiente demo e consulta o saldo/moeda.
 4. Revise as regras e clique em **Iniciar sessão demo**. Conectar não compra contratos. A sessão depende de esta página e do computador permanecerem ativos.
 
@@ -65,13 +64,13 @@ O token é usado pelo servidor local em um cabeçalho HTTPS para a Deriv e não 
 
 ### Estratégia experimental
 
-A regra da automação fica em `dist/automation.mjs` e reutiliza os cálculos de `dist/math.mjs`. Ela utiliza 500 candles fechados de 1 minuto por ativo, obtidos pela mesma busca pública das três famílias autorizadas. Configurações do gráfico não alteram a estratégia da automação.
+A regra da automação fica em `dist/automation.mjs` e reutiliza os cálculos de `dist/math.mjs`. Ela utiliza 500 candles fechados por ativo. No modo automático, compara 1 minuto, 5 minutos, 15 minutos e 1 hora, então escolhe o melhor sinal pelo score de confluência, com desempate pelo ADX. Também é possível travar a sessão em um desses tempos. Esses candles são obtidos pela mesma busca pública das três famílias autorizadas. Configurações do gráfico não alteram a estratégia da automação.
 
-Para cada candidato, a automação calcula ADX/DMI com os parâmetros padrão e aplica o ADX mínimo configurado na sessão. Quando +DI é maior que -DI e o fechamento está acima da EMA, a direção elegível é Alta (`CALL`). Quando -DI é maior que +DI e o fechamento está abaixo da EMA, a direção elegível é Baixa (`PUT`). Caso contrário, não há entrada.
+Para cada candidato, a automação calcula ADX/DMI, EMA, MACD, RSI e ATR com os parâmetros padrão e aplica o ADX mínimo configurado na sessão. Quando +DI é maior que -DI, o fechamento está acima da EMA, o MACD confirma alta, o RSI está em zona compradora e o ATR está dentro do limite de volatilidade, a direção elegível é Alta (`CALL`). Quando -DI é maior que +DI, o fechamento está abaixo da EMA, o MACD confirma baixa, o RSI está em zona vendedora e o ATR está dentro do limite de volatilidade, a direção elegível é Baixa (`PUT`). Caso contrário, não há entrada.
 
-A busca inicial retorna os ativos ordenados pelo maior ADX. A automação percorre esse ranking e tenta o primeiro candidato que tenha sinal válido e contrato de Alta/Baixa compatível com a duração configurada. Depois que um contrato é liquidado, a automação reavalia primeiro o mesmo símbolo; se ADX/DMI e preço continuarem validando a mesma direção, ela mantém o símbolo e abre a próxima entrada nele. O ranking completo só é consultado novamente quando a tendência fica contrária, perde força suficiente para o ADX mínimo ou deixa de ter contrato compatível. Não há score composto, MACD/RSI/Bollinger/ATR como filtros de entrada, reconhecimento de padrões, backtest de rentabilidade ou cálculo de probabilidade de acerto.
+A busca inicial retorna os ativos ordenados pelo maior ADX. A automação percorre esse ranking e escolhe o candidato com melhor score de confluência entre os que tenham sinal válido e contrato de Alta/Baixa compatível com a duração configurada; em empate, usa o maior ADX. Depois que um contrato é liquidado, a automação reavalia primeiro o mesmo símbolo; se ADX/DMI, preço, MACD, RSI e ATR continuarem validando a mesma direção, ela mantém o símbolo e abre a próxima entrada nele. O ranking completo só é consultado novamente quando a tendência fica contrária, perde força suficiente para o ADX mínimo, perde confluência ou deixa de ter contrato compatível. Não há Bollinger como filtro de entrada, reconhecimento de padrões, backtest de rentabilidade ou cálculo de probabilidade de acerto.
 
-Mantidos: início manual em conta demo, entrada fixa, sem martingale, uma operação por vez, uma entrada por candle, validação de contrato/duração, saldo, cotação e limites da sessão. Padrões: ADX mínimo 25, entrada 1, duração 1 minuto, perda máxima 5, meta 5 e máximo 10 contratos. Reiniciar manualmente zera os contadores da sessão.
+Mantidos: início manual em conta demo, uma operação por vez, uma entrada por candle em cada tempo avaliado, validação de contrato/duração, saldo, cotação e limites da sessão. Martingale é opcional e vem desligado por padrão; quando ligado, aumenta a próxima entrada após perda pelo multiplicador configurado, até o máximo de passos, e reseta após ganho. Padrões: busca automática de tempo, ADX mínimo 25, entrada 1, duração 1 minuto, perda máxima 5, meta 5, máximo 10 contratos, martingale desligado, multiplicador 2 e máximo 2 passos. Reiniciar manualmente zera os contadores da sessão.
 
 Os testes verificam cálculos, autenticação, bloqueios e fluxo de compra com dados artificiais; não medem probabilidade de acerto. Não foi acrescentado volume/VWAP à decisão porque a integração não fornece volume.
 
@@ -82,13 +81,13 @@ A compra é sempre iniciada pelo usuário, depois da conexão demo e do clique e
 1. A interface cria um bloqueio com Web Locks para a chave da conta demo. Esse bloqueio evita duas sessões na mesma conta, aba/origem e navegador.
 2. O motor valida os limites informados: entrada, perda máxima, meta, quantidade máxima de operações, duração em minutos e ADX mínimo.
 3. Antes de procurar sinal, consulta `portfolio`. Se existir contrato aberto na conta demo, a sessão é recusada.
-4. O motor aguarda um candle novo de 1 minuto. Ele não abre mais de uma entrada no mesmo candle de corte.
-5. Se já houve uma compra liquidada na sessão, o sistema tenta primeiro reavaliar o mesmo símbolo pelo histórico público atualizado. Se a direção continuar igual, o ADX ainda respeitar o mínimo e houver contrato compatível, o símbolo é mantido.
+4. O motor aguarda candles novos nos tempos avaliados. Ele não abre mais de uma entrada no mesmo candle de corte de cada tempo.
+5. Se já houve uma compra liquidada na sessão, o sistema tenta primeiro reavaliar o mesmo símbolo pelo histórico público atualizado. Se a direção continuar igual, o ADX ainda respeitar o mínimo, MACD/RSI/ATR ainda confirmarem e houver contrato compatível, o símbolo é mantido.
 6. Quando não há símbolo mantido, a busca pública percorre Continuous Volatility, Jump e Step, ordena por ADX e testa os candidatos nessa ordem.
-7. O sinal elegível é `CALL` quando `+DI > -DI` e o fechamento está acima da EMA. O sinal elegível é `PUT` quando `-DI > +DI` e o fechamento está abaixo da EMA. Fora dessas condições, não há entrada.
+7. O sinal elegível é `CALL` quando `+DI > -DI`, o fechamento está acima da EMA, o MACD confirma alta, o RSI está em zona compradora e o ATR está dentro do limite de volatilidade. O sinal elegível é `PUT` quando `-DI > +DI`, o fechamento está abaixo da EMA, o MACD confirma baixa, o RSI está em zona vendedora e o ATR está dentro do limite de volatilidade. Fora dessas condições, não há entrada.
 8. Para o candidato com sinal, a conta autenticada consulta `contracts_for`. A compra só segue se houver contrato intraday do tipo `CALL` ou `PUT` que cubra a duração configurada.
 9. Antes da cotação, o motor consulta novamente `portfolio` e depois `balance`. A moeda retornada precisa ser a mesma moeda da conexão e o saldo precisa cobrir a entrada.
-10. A cotação é solicitada com `proposal`, usando `amount` igual à entrada, `basis: "stake"`, `duration_unit: "m"`, o tipo `CALL`/`PUT` e o símbolo escolhido.
+10. A cotação é solicitada com `proposal`, usando `amount` igual à próxima entrada calculada, `basis: "stake"`, `duration_unit: "m"`, o tipo `CALL`/`PUT` e o símbolo escolhido.
 11. A cotação precisa ter ID, preço válido, preço menor ou igual à entrada e `spot_time` recente. O sistema consulta `time` novamente e descarta a entrada se o candle mudou ou se a cotação ficou velha.
 12. Antes de enviar `buy`, grava em `localStorage` um marcador pendente com conta, símbolo, tipo, entrada, horário e `contractId: null`.
 13. A compra é enviada uma única vez com `buy` igual ao ID da cotação e `price` igual à entrada configurada.
