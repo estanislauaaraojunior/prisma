@@ -1,0 +1,115 @@
+<!doctype html><meta charset="utf-8"><pre id="result">RUNNING</pre>
+<script type="module">
+import {DerivClient, scanSynthetic, normalizeCandles, scoreSymbol} from '../dist/deriv.mjs';
+const output = document.querySelector('#result');
+let passed = 0;
+function ok(value, message) { if (!value) throw new Error(message); }
+async function test(name, fn) { await fn(); passed++; }
+const boundary = 1768000020;
+const candles = Array.from({length:501}, (_,i)=>({epoch:boundary-(500-i)*60,open:100+i,high:101+i,low:99+i,close:100+i}));
+try {
+ await test('Exclui candle aberto',()=>{
+  const rows=normalizeCandles(candles,boundary,60);
+  ok(rows.length===500 && rows.at(-1).time===boundary-60,'candle aberto incluído');
+  ok(scoreSymbol({symbol:'A'},rows).direction==='Alta','direção incorreta');
+ });
+ await test('Rejeita histórico velho e insuficiente',()=>{
+  for(const input of [candles.slice(0,20),candles.map(c=>({...c,epoch:c.epoch-120}))]) {
+   let failed=false;try{normalizeCandles(input,boundary,60)}catch{failed=true}ok(failed,'aceitou histórico inválido');
+  }
+ });
+ await test('Ranking, filtro, esquema novo, falha parcial e fechamento',async()=>{
+  let closed=false;const requests=[];
+  const client={connect:async()=>{},close:()=>{closed=true},request:async p=>{
+   requests.push(p);
+   if(p.time)return {time:boundary+20};
+   if(p.active_symbols)return {active_symbols:[
+    {market:'synthetic_index',submarket:'random_index',exchange_is_open:1,underlying_symbol:'UP',underlying_symbol_name:'Par em alta'},
+    {market:'synthetic_index',submarket:'jump_index',exchange_is_open:1,symbol:'BAD'},
+    {market:'forex',exchange_is_open:0,symbol:'CLOSED'},
+    {market:'synthetic_index',exchange_is_open:1,symbol:'SYNTH'}]};
+   if(p.ticks_history==='BAD')throw new Error('Sem dados');
+   return {candles};
+  }};
+  const r=await scanSynthetic({client});
+  ok(r.ranking[0].symbol==='UP' && r.failures.length===1 && r.total===2,'ranking incorreto');
+  ok(requests.at(-1).end===boundary-1 && closed,'corte ou fechamento incorreto');
+ });
+ await test('Mercado fechado preserva erro e fecha cliente',async()=>{
+  let closed=false,failed=false;
+  try{await scanSynthetic({client:{connect:async()=>{},close:()=>closed=true,request:async p=>p.time?{time:boundary}:{active_symbols:[]}}})}catch(e){failed=e.message.includes('Nenhum ativo')}
+  ok(closed&&failed,'mercado fechado sem tratamento');
+ });
+ await test('Busca somente as três famílias autorizadas',async()=>{
+  const requested=[];
+  const symbols=[
+   {market:'forex',submarket:'random_index',symbol:'FX'},
+   ...['random_index','jump_index','step_index','crash_index','range_index','random_daily','forex_basket','unknown'].map(submarket=>({market:'synthetic_index',submarket,symbol:submarket})),
+   {market:'synthetic_index',submarket:'step_index',symbol:'SUSPENDED',is_trading_suspended:1},
+   {market:'synthetic_index',submarket:'jump_index',symbol:'CLOSED',exchange_is_open:0}];
+  const client={connect:async()=>{},close:()=>{},request:async p=>{
+   if(p.time)return {time:boundary+20};
+   if(p.active_symbols)return {active_symbols:symbols.map(s=>({exchange_is_open:1,...s}))};
+   requested.push(p.ticks_history);return {candles};
+  }};
+  const result=await scanSynthetic({client});
+  ok(JSON.stringify(requested)===JSON.stringify(['random_index','jump_index','step_index']),'consultou mercado não autorizado');
+  ok(result.total===3&&result.ranking.length===3,'família autorizada ausente');
+  ok(result.ranking.every(r=>r.family),'família não identificada');
+ });
+ await test('Sem famílias autorizadas não busca outros mercados',async()=>{
+  let historyRequested=false,failed=false;
+  const client={connect:async()=>{},close:()=>{},request:async p=>{
+   if(p.time)return {time:boundary};
+   if(p.active_symbols)return {active_symbols:[{market:'synthetic_index',submarket:'crash_index',symbol:'BOOM1000',exchange_is_open:1}]};
+   historyRequested=true;return {candles};
+  }};
+  try{await scanSynthetic({client})}catch{failed=true}
+  ok(failed&&!historyRequested,'buscou grupo fora da seleção');
+ });
+ await test('Cliente correlaciona respostas e bloqueia ordens',async()=>{
+  class Socket {
+   constructor(){this.readyState=1;queueMicrotask(()=>this.onopen())}
+   send(s){const p=JSON.parse(s);queueMicrotask(()=>this.onmessage({data:JSON.stringify({req_id:p.req_id,time:123})}))}
+   close(){this.readyState=3}
+  }
+  const c=new DerivClient({Socket,timeout:50});await c.connect();
+  ok((await c.request({time:1})).time===123,'resposta perdida');
+  let failed=false;try{await c.request({buy:1})}catch{failed=true}ok(failed,'ordem permitida');c.close();
+ });
+ await test('Timeout de requisição',async()=>{
+  class Socket {constructor(){this.readyState=1;queueMicrotask(()=>this.onopen())}send(){}close(){}}
+  const c=new DerivClient({Socket,timeout:10});await c.connect();
+  let failed=false;try{await c.request({time:1})}catch{failed=true}ok(failed&&c.pending.size===0,'timeout incorreto');c.close();
+ });
+ // Run the existing mathematical suite using a small browser adapter.
+ const source=await (await fetch('./math.test.mjs')).text();
+ const assertions={ok, equal:(a,b)=>ok(a===b,`${a} != ${b}`),deepEqual:(a,b)=>ok(JSON.stringify(a)===JSON.stringify(b),'arrays diferentes'),throws:(fn,re)=>{let e;try{fn()}catch(error){e=error}ok(e&&re.test(e.message),'exceção esperada')}};
+ const math=await import('../dist/math.mjs');
+ const body=source.replace(/^import .*;$/gm,'');
+ new Function('test','assert',...Object.keys(math),body)((name,fn)=>{fn();passed++},assertions,...Object.values(math));
+ const frame=document.createElement('iframe');frame.src='../dist/index.html';document.body.append(frame);
+ await new Promise(resolve=>frame.onload=resolve);
+ ok(frame.contentDocument.querySelectorAll('#priceChart svg').length===1,'gráfico não renderizou');
+ ok(frame.contentDocument.getElementById('derivButton'),'botão ausente');passed++;
+ await test('Botão carrega vencedor, identifica origem e restaura exemplo',async()=>{
+  const win=frame.contentWindow, doc=frame.contentDocument;
+  win.WebSocket=class {
+   constructor(){this.readyState=1;queueMicrotask(()=>this.onopen())}
+   send(text){const p=JSON.parse(text);const data=p.time?{time:boundary+20}:p.active_symbols?{active_symbols:[{market:'synthetic_index',submarket:'step_index',exchange_is_open:1,underlying_symbol:'TEST',underlying_symbol_name:'Teste Sintético'}]}:{candles};queueMicrotask(()=>this.onmessage({data:JSON.stringify({...data,req_id:p.req_id})}))}
+   close(){this.readyState=3}
+  };
+  doc.getElementById('derivButton').click();
+  for(let i=0;i<100&&doc.getElementById('derivButton').disabled;i++)await new Promise(r=>setTimeout(r,10));
+  ok(doc.getElementById('derivStatus').textContent.includes('Gráfico carregado'),'busca não concluiu');
+  ok(doc.getElementById('derivStatus').textContent.includes('Índices sintéticos'),'mercado não identificado');
+  ok(doc.getElementById('assetInput').disabled&&doc.getElementById('assetName').textContent.includes('TEST'),'origem incorreta');
+  ok(doc.getElementById('derivResults').querySelectorAll('tbody tr').length===1,'ranking ausente');
+  doc.getElementById('saveReading').click();
+  ok(doc.getElementById('historyBody').textContent.includes('Deriv'),'histórico perdeu origem');
+  doc.getElementById('demoButton').click();
+  ok(doc.getElementById('dataBadge').textContent==='Exemplo didático','exemplo não restaurado');
+ });
+ output.textContent=`PASS: ${passed} testes (integração, matemática e renderização)`;
+}catch(error){output.textContent='FAIL: '+error.stack}
+</script>

@@ -1,0 +1,256 @@
+<!doctype html><meta charset="utf-8"><pre id="result">RUNNING</pre>
+<script type="module">
+import {requestAccountSocket,AccountConnection,selectDemoAccount} from '../dist/deriv-account.mjs';
+import {DemoAutomation,automationDefaults,validateAutomation,entrySignal,supportsDuration} from '../dist/automation.mjs';
+const output=document.getElementById('result');let passed=0;
+const ok=(value,message)=>{if(!value)throw new Error(message)};
+async function test(name,fn){output.textContent='RUNNING: '+name;await fn();passed++}
+async function rejects(fn,pattern){let error;try{await fn()}catch(e){error=e}ok(error&&pattern.test(error.message),'Falha esperada: '+pattern);return error}
+const credentials={appId:'test-app',token:'test-secret'};
+const demoBody={data:[{account_id:'REAL123',account_type:'real',status:'active',currency:'USD'},{account_id:'DEMO123',account_type:'demo',status:'active',currency:'USD'}]};
+const fetcher=async url=>({ok:true,json:async()=>url.endsWith('/otp')?{data:{url:'wss://api.derivws.com/trading/v1/options/ws/demo?otp=test'}}:demoBody});
+const boundary=1768000020;
+const rows=Array.from({length:500},(_,i)=>({time:boundary-(500-i)*60,open:100+i,close:100+i,high:101+i,low:99+i,volume:null}));
+const candidate={symbol:'R_10',name:'Volatility 10',family:'Continuous Volatility Indices',rows};
+const config={...automationDefaults,maxTrades:1};
+function fixture(overrides={}){
+ const map=new Map(),requests=[],events=[];
+ const storage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k)};
+ const client={request:async p=>{
+  requests.push(p);
+  const key=Object.keys(p)[0];
+  if(overrides[key])return overrides[key](p);
+  if(p.time)return {time:boundary+5};
+  if(p.portfolio)return {portfolio:{contracts:[]}};
+  if(p.balance)return {balance:{balance:100,currency:'USD'}};
+  if(p.contracts_for)return {contracts_for:{available:[{contract_type:'CALL',expiry_type:'intraday',min_contract_duration:'15s',max_contract_duration:'1d'}]}};
+  if(p.proposal)return {proposal:{id:'quote',ask_price:1,spot_time:boundary+4}};
+  if(p.buy)return {buy:{contract_id:123}};
+  if(p.proposal_open_contract)return {proposal_open_contract:{contract_id:123,is_sold:1,profit:.95}};
+  throw new Error('Unexpected '+JSON.stringify(p));
+ }};
+ const engine=new DemoAutomation({client,accountId:'DEMO123',currency:'USD',storage,scan:async()=>({boundary,ranking:[candidate]}),wait:async()=>{},onEvent:e=>events.push(e)});
+ return {engine,requests,events,storage};
+}
+try{
+ await test('Demo obrigatório antes da autenticação',async()=>{
+  let fetched=false;
+  await rejects(()=>requestAccountSocket({...credentials,accountType:'real'},{fetcher:()=>{fetched=true}}),/somente conta demo/);
+  ok(!fetched,'Autenticou conta real');
+ });
+ await test('Token via cabeçalho e endpoint demo validado',async()=>{
+  let request;const calls=[];
+  const {url,accountId}=await requestAccountSocket(credentials,{fetcher:async(u,o)=>{request={u,o};calls.push(request);return fetcher(u)}});
+  ok(accountId==='DEMO123'&&calls.length===2&&calls[0].o.method==='GET'&&calls[1].o.method==='POST'&&calls[1].u.includes('/DEMO123/otp'),'Descoberta e OTP incorretos');
+  ok(url.endsWith('?otp=test'),'URL inválida');
+  ok(request.o.headers.Authorization==='Bearer test-secret'&&!request.u.includes('test-secret'),'Token fora do cabeçalho');
+ for(const url of ['wss://api.derivws.com/trading/v1/options/ws/real?otp=x','wss://attacker.test/trading/v1/options/ws/demo?otp=x','wss://api.derivws.com/trading/v1/options/ws/demo']){
+  await rejects(()=>requestAccountSocket(credentials,{fetcher:async target=>({ok:true,json:async()=>target.endsWith('/otp')?{data:{url}}:demoBody})}),/não corresponde/);
+  }
+ });
+ await test('Credenciais vazias usam servidor local sem expor token no navegador',async()=>{
+  const calls=[];
+  const {url,accountId}=await requestAccountSocket({appId:'',token:''},{fetcher:async(u,o)=>{
+   calls.push({u,o});
+   return {ok:true,json:async()=>({url:'wss://api.derivws.com/trading/v1/options/ws/demo?otp=local',accountId:'VRTC123'})};
+  }});
+  ok(accountId==='VRTC123'&&url.endsWith('?otp=local'),'Resposta local inválida');
+  ok(calls.length===1&&calls[0].u==='/api/deriv/account-socket'&&calls[0].o.method==='POST','Endpoint local não foi usado');
+  ok(!JSON.stringify(calls[0]).includes(credentials.token),'Token passou pelo navegador');
+ });
+ await test('Seleção automática ignora contas reais e inativas',()=>{
+  const body={data:[
+   {account_id:'REAL1',account_type:'real',status:'active',currency:'USD'},
+   {account_id:'OFF',account_type:'demo',status:'disabled',currency:'USD'},
+   {account_id:'DEMO2',account_type:'demo',status:'active',currency:'USD'},
+   {account_id:'DEMO1',account_type:'demo',status:'active',currency:'USD'},
+   {account_id:'OTHER',account_type:'demo',status:'active',currency:'EUR'}]};
+  ok(selectDemoAccount(body).account_id==='DEMO1','Escolha automática incorreta');
+  ok(selectDemoAccount({data:[...body.data].reverse()}).account_id==='DEMO1','Seleção instável');
+ });
+ await test('Sem demo ativa não pede OTP nem conecta real',async()=>{
+  for(const body of [{data:[]},{data:[{account_id:'REAL1',account_type:'real',status:'active'}]},{data:[{account_id:'OFF',account_type:'demo',status:'disabled'}]}]){
+   let count=0;
+   await rejects(()=>requestAccountSocket(credentials,{fetcher:async()=>{count++;return {ok:true,json:async()=>body}}}),/Nenhuma conta demo/);
+   ok(count===1,'Pediu OTP sem conta demo');
+  }
+ });
+ await test('Lista malformada não inicia autenticação de conta',async()=>{
+  await rejects(()=>requestAccountSocket(credentials,{fetcher:async()=>({ok:true,json:async()=>({data:null})})}),/lista de contas inválida/);
+ });
+ await test('Autenticação recusada não vaza credenciais',async()=>{
+  const error=await rejects(()=>requestAccountSocket(credentials,{fetcher:async()=>({ok:false,status:401})}),/HTTP 401/);
+  ok(!error.message.includes(credentials.token),'Vazou token');
+ });
+ await test('Limites e valores inválidos',async()=>{
+  for(const update of [{stake:NaN},{stake:6},{maxTrades:0},{duration:0},{minADX:101},{stake:1.001}])await rejects(()=>validateAutomation({...config,...update}),/./);
+ });
+ await test('Sinais de alta, baixa e família excluída',()=>{
+  ok(entrySignal(candidate,config)==='CALL','Alta ausente');
+  const falling=rows.map((r,i)=>({...r,open:1000-i,close:1000-i,high:1001-i,low:999-i}));
+  ok(entrySignal({...candidate,rows:falling},config)==='PUT','Baixa ausente');
+  ok(entrySignal({...candidate,family:'Boom'},config)===null,'Operou família excluída');
+  const flat=rows.map(r=>({...r,open:100,close:100,high:101,low:99}));
+  ok(entrySignal({...candidate,rows:flat},config)===null,'Operou sem força');
+ });
+ await test('Confluência bloqueada não solicita cotação nem compra',async()=>{
+  const f=fixture();
+  const spike=rows.map(r=>({...r}));spike.at(-1).high+=100;
+  f.engine.scan=async()=>({boundary,ranking:[{...candidate,rows:spike}]});
+  f.engine.onEvent=e=>{if(e.message.includes('Sem sinal compatível'))f.engine.stop()};
+  await f.engine.run(config);
+  ok(!f.requests.some(p=>p.proposal || p.buy),'Solicitou entrada bloqueada');
+ });
+ await test('Maior confluência tem prioridade sobre ADX',async()=>{
+  const f=fixture();
+  const stronger={...candidate,symbol:'BEST',adx:90,rows:rows.map(r=>({...r,open:r.close-.5}))};
+  f.engine.scan=async()=>({boundary,ranking:[{...candidate,adx:100},stronger]});
+  await f.engine.run(config);
+  ok(f.requests.find(p=>p.proposal)?.underlying_symbol==='BEST','Priorizou apenas ADX');
+  ok(f.events.find(e=>e.opened)?.opened.analysis.score===100,'Não preservou a análise');
+ });
+ await test('Contrato incompatível em ticks é excluído',()=>{
+  ok(!supportsDuration([{contract_type:'CALL',expiry_type:'tick',min_contract_duration:'1t',max_contract_duration:'10t'}],'CALL',1),'Aceitou ticks');
+ });
+ await test('Compra única, registro antes do envio e liquidação',async()=>{
+  const f=fixture({buy:async()=>{ok(f.engine.pending()?.contractId===null,'Registro ausente antes da compra');return {buy:{contract_id:123}}}});
+  await f.engine.run(config);
+  ok(f.requests.filter(p=>p.buy).length===1,'Compra duplicada');
+  ok(f.engine.profit===.95&&f.engine.trades===1&&!f.engine.pending(),'Resultado incorreto');
+ });
+ await test('Sessão com várias liquidações aguarda o próximo candle',async()=>{
+  let now=boundary+5,active=null,buys=0,scans=0;
+  const entered=[], settled=[];
+  const f=fixture({
+   time:async()=>({time:now}),
+   proposal:async()=>({proposal:{id:'quote-'+buys,ask_price:1,spot_time:now}}),
+   buy:async()=>{
+    ok(active===null,'Enviou compra com posição aberta');
+    entered.push(Math.floor(now/60)*60);
+    active={id:++buys,finish:now+4};
+    return {buy:{contract_id:active.id}};
+   },
+   proposal_open_contract:async p=>{
+    ok(p.contract_id===active.id,'Consultou contrato incorreto');
+    const sold=now>=active.finish;
+    const result={proposal_open_contract:{contract_id:active.id,is_sold:sold?1:0,profit:sold?.25:0}};
+    if(sold){settled.push(active.id);active=null}
+    return result;
+   }
+  });
+  f.engine.wait=async ms=>{now+=ms/1000;ok(now<boundary+300,'A sessão não avançou')};
+  f.engine.scan=async()=>{
+   scans++;const currentBoundary=Math.floor(now/60)*60;
+   return {boundary:currentBoundary,ranking:[{...candidate,rows:rows.map(r=>({...r,time:r.time+currentBoundary-boundary}))}]};
+  };
+  await f.engine.run({...config,maxTrades:3});
+  ok(buys===3&&settled.length===3&&f.engine.profit===.75,'Liquidações ou total incorretos');
+  ok(new Set(entered).size===3&&scans===3,'Repetiu uma entrada no mesmo candle');
+  ok(!f.engine.pending()&&!f.engine.busy,'Sessão não foi encerrada');
+ });
+ await test('Saldo insuficiente impede compra',async()=>{
+  const f=fixture({balance:async()=>({balance:{balance:0,currency:'USD'}})});
+  await rejects(()=>f.engine.run(config),/Saldo insuficiente/);ok(!f.requests.some(p=>p.buy),'Comprou sem saldo');
+ });
+ await test('Posição existente impede sessão',async()=>{
+  const f=fixture({portfolio:async()=>({portfolio:{contracts:[{contract_id:9}]}})});
+  await rejects(()=>f.engine.run(config),/contratos abertos/);ok(!f.requests.some(p=>p.buy),'Ignorou posição');
+ });
+ await test('Compra incerta mantém bloqueio e não repete',async()=>{
+  const f=fixture({buy:async()=>{throw new Error('Timeout')}});
+  await rejects(()=>f.engine.run(config),/Timeout/);
+  ok(f.engine.pending()!==null,'Perdeu compra incerta');
+  await rejects(()=>f.engine.run(config),/pendente/);
+  ok(f.requests.filter(p=>p.buy).length===1,'Reenviou compra');
+ });
+ await test('Recusa explícita não deixa compra pendente',async()=>{
+  const f=fixture({buy:async()=>{const e=new Error('Recusada');e.code='InvalidProposal';throw e}});
+  await rejects(()=>f.engine.run(config),/Recusada/);ok(!f.engine.pending(),'Bloqueio de compra recusada');
+ });
+ await test('Parar durante cotação impede envio',async()=>{
+  const f=fixture({proposal:async()=>{f.engine.stop();return {proposal:{id:'q',ask_price:1,spot_time:boundary+4}}}});
+  await f.engine.run(config);ok(!f.requests.some(p=>p.buy),'Comprou após parar');
+ });
+ await test('Parar após compra acompanha liquidação',async()=>{
+  const f=fixture({buy:async()=>{f.engine.stop();return {buy:{contract_id:123}}}});
+  await f.engine.run(config);ok(f.engine.profit===.95&&!f.engine.pending(),'Abandonou contrato enviado');
+ });
+ await test('Limite de perda impede entrada seguinte',async()=>{
+  const f=fixture({proposal_open_contract:async()=>({proposal_open_contract:{contract_id:123,is_sold:1,profit:-1}})});
+  await f.engine.run({...config,maxTrades:10,stopLoss:1});
+  ok(f.engine.trades===1&&f.engine.profit===-1,'Excedeu limite de perda');
+ });
+ await test('Meta de ganho encerra sessão',async()=>{
+  const f=fixture();await f.engine.run({...config,maxTrades:10,takeProfit:.5});ok(f.engine.trades===1,'Excedeu meta');
+ });
+ await test('Cotação acima do valor impede compra',async()=>{
+  const f=fixture({proposal:async()=>({proposal:{id:'q',ask_price:2,spot_time:boundary+4}})});
+  await rejects(()=>f.engine.run(config),/Cotação inválida/);ok(!f.requests.some(p=>p.buy),'Excedeu entrada');
+ });
+ await test('Sinal desatualizado é descartado',async()=>{
+  let clocks=0;const f=fixture({time:async()=>({time:boundary+(++clocks===1?5:65)})});
+  f.engine.onEvent=e=>{if(e.message.includes('desatualizados'))f.engine.running=false};
+  await f.engine.run(config);ok(!f.requests.some(p=>p.buy),'Comprou sinal velho');
+ });
+ await test('Cliente não repete compra após timeout',async()=>{
+  let sent=0;
+  class Socket{constructor(){this.readyState=1;queueMicrotask(()=>this.onopen())}send(){sent++}close(){this.readyState=3}}
+  const c=new AccountConnection({Socket,timeout:10});await c.connect(credentials,{fetcher});
+  const e=await rejects(()=>c.request({buy:'q',price:1}),/sem confirmação/);
+  ok(e.uncertain&&sent===1,'Repetiu ordem ou perdeu incerteza');c.close();
+ });
+ await test('Desconexão marca compra como incerta',async()=>{
+  class Socket{constructor(){this.readyState=1;queueMicrotask(()=>this.onopen())}send(){queueMicrotask(()=>this.onclose())}close(){this.readyState=3}}
+  const c=new AccountConnection({Socket});await c.connect(credentials,{fetcher});
+  const e=await rejects(()=>c.request({buy:'q',price:1}),/durante a compra/);ok(e.uncertain,'Perdeu incerteza');
+ });
+ await test('Pendência não é liberada com posições abertas',async()=>{
+  const f=fixture({portfolio:async()=>({portfolio:{contracts:[{contract_id:123}]}})});f.engine.save({contractId:null});
+  await rejects(()=>f.engine.acknowledgeUnknown(),/contratos abertos/);ok(f.engine.pending(),'Liberou bloqueio');
+ });
+ await test('Painel conecta demo e executa uma sessão completa simulada',async()=>{
+  const frame=document.createElement('iframe');frame.src='../dist/index.html';document.body.append(frame);
+  await new Promise(resolve=>frame.onload=resolve);
+  const win=frame.contentWindow,doc=frame.contentDocument;
+  let buys=0;
+  win.fetch=fetcher;
+  win.WebSocket=class{
+   constructor(){this.readyState=1;queueMicrotask(()=>this.onopen())}
+   send(text){
+    const p=JSON.parse(text);let data;
+    if(p.time)data={time:boundary+5};
+    else if(p.balance)data={balance:{balance:100,currency:'USD',loginid:'DEMO123'}};
+    else if(p.portfolio)data={portfolio:{contracts:[]}};
+    else if(p.active_symbols)data={active_symbols:[{market:'synthetic_index',submarket:'random_index',underlying_symbol:'R_10',underlying_symbol_name:'Volatility 10',exchange_is_open:1}]};
+    else if(p.ticks_history)data={candles:rows.map(r=>({...r,epoch:r.time}))};
+    else if(p.contracts_for)data={contracts_for:{available:[{contract_type:'CALL',expiry_type:'intraday',min_contract_duration:'15s',max_contract_duration:'1d'}]}};
+    else if(p.proposal)data={proposal:{id:'quote',ask_price:1,spot_time:boundary+4}};
+    else if(p.buy){buys++;data={buy:{contract_id:123}}}
+    else if(p.proposal_open_contract)data={proposal_open_contract:{contract_id:123,is_sold:1,profit:.95}};
+    else throw new Error('Requisição inesperada');
+    queueMicrotask(()=>this.onmessage({data:JSON.stringify({...data,req_id:p.req_id})}));
+   }
+   close(){this.readyState=3}
+  };
+  ok(!doc.getElementById('derivAccountId'),'Campo de conta manual ainda existe');
+  ok(doc.querySelectorAll('#accountFields input').length===0,'Conexão ainda exige credenciais no painel');
+  doc.getElementById('accountForm').dispatchEvent(new win.Event('submit',{cancelable:true}));
+  for(let i=0;i<100&&doc.getElementById('startAutomation').disabled;i++)await new Promise(r=>setTimeout(r,10));
+  ok(!doc.getElementById('startAutomation').disabled,'Conta não conectou: '+doc.getElementById('accountStatus').textContent);
+  doc.getElementById('auto-maxTrades').value='1';doc.getElementById('startAutomation').click();
+  for(let i=0;i<100&&doc.getElementById('startAutomation').disabled;i++)await new Promise(r=>setTimeout(r,10));
+  ok(buys===1,'Número de compras incorreto: '+buys+' / '+doc.getElementById('automationStatus').textContent);
+  ok(doc.getElementById('automationTotals').textContent.includes('0.95 USD'),'Resultado não exibido');
+  ok(!doc.getElementById('automationSettings').disabled,'Configuração não liberada');
+  let release;
+  Object.defineProperty(win.navigator,'locks',{configurable:true,value:{request:(name,options,callback)=>new Promise(resolve=>{release=()=>resolve(callback({name}))})}});
+  doc.getElementById('startAutomation').click();
+  doc.getElementById('stopAutomation').click();
+  release();
+  for(let i=0;i<100&&doc.getElementById('startAutomation').disabled;i++)await new Promise(r=>setTimeout(r,10));
+  ok(buys===1,'Iniciou operação após parada durante aquisição da sessão');
+  doc.getElementById('disconnectAccount').click();ok(doc.getElementById('startAutomation').disabled,'Desconexão falhou');
+ });
+ output.textContent=`PASS: ${passed} testes de automação demo`;
+}catch(error){output.textContent='FAIL: '+error.stack}
+</script>

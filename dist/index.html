@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prisma — Laboratório de indicadores</title>
+<meta name="description" content="Explore séries históricas e indicadores configuráveis. Cálculos transparentes e automação opcional em conta demo Deriv.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2315293b'/%3E%3Cpath d='M7 24L16 7l9 17H7z' fill='none' stroke='%235cd6c5' stroke-width='3'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./style.css"><script type="module" src="./app.mjs"></script><script type="module" src="./automation-ui.mjs"></script>
+</head>
+<body>
+<header class="topbar"><a class="brand" href="./" aria-label="Prisma, início"><svg width="31" height="31" viewBox="0 0 32 32" aria-hidden="true"><path d="M4 27L16 5l12 22H4Z" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M16 5v22M4 27l18-11" fill="none" stroke="currentColor" opacity=".5"/></svg><span>prisma<span class="brand-sub">LABORATÓRIO DE INDICADORES</span></span></a><span class="header-note">Análise descritiva <span class="separator">/</span> Sem IA</span><button id="methodButton" class="ghost">Como os cálculos funcionam</button></header>
+<main>
+<section class="page-heading"><div><p class="eyebrow">EXPLORAR UMA SÉRIE</p><h1>Observe os dados.<br class="mobile-break"> Entenda os indicadores.</h1><p class="intro">Uma leitura do que aconteceu na amostra, com cada cálculo à vista.</p></div><button id="importButton" class="primary">Importar candles <span aria-hidden="true">↗</span></button><input id="csvFile" type="file" accept=".csv,text/csv" hidden></section>
+<section class="panel deriv-panel" aria-labelledby="derivTitle">
+<div class="section-head"><div><p class="eyebrow">DADOS DA DERIV · RANKING</p><h2 id="derivTitle">Ativo com maior força de tendência</h2></div><button id="derivButton" class="primary">Buscar na Deriv</button></div>
+<p class="muted">Busca somente Continuous Volatility Indices, Jump Indices e Step Indices abertos. Compara a força pelo ADX (14), em 500 candles fechados. Alta e baixa indicam a direção pelo DMI. A força pertence ao ativo, não a uma moeda isolada, e não representa probabilidade de acerto.</p>
+<div class="deriv-controls"><label for="derivInterval">Intervalo dos candles</label><select id="derivInterval"><option value="60">1 minuto</option><option value="300">5 minutos</option><option value="900">15 minutos</option><option value="3600">1 hora</option></select><span class="muted">Consulta pontual · clique novamente para atualizar</span></div>
+<p id="derivStatus" role="status" aria-live="polite">Requer internet. Sem login ou token.</p>
+<div id="derivResults" class="table-scroll" hidden></div>
+</section>
+<section class="panel automation-panel" aria-labelledby="automationTitle">
+<div class="section-head"><div><p class="eyebrow">AUTOMAÇÃO · CONTA DEMO</p><h2 id="automationTitle">Operações automáticas com saldo virtual</h2></div><span class="badge">Somente demo</span></div>
+<p class="muted">Continuous Volatility, Jump e Step: análise de 500 candles fechados de 1 minuto. A entrada exige ADX/DMI e EMAs 20/50 alinhados, confirmação de MACD e RSI e volatilidade dentro dos limites de ATR. Bollinger e direção do corpo do candle complementam o score mínimo de 75/100. A seleção prioriza o score, com desempate pelo ADX. Score não é probabilidade de acerto. Estratégia experimental, somente demo.</p>
+<form id="accountForm"><fieldset id="accountFields" class="automation-fields"><legend>Conectar conta demo de Options</legend>
+<p class="muted">As credenciais são lidas do arquivo .env pelo servidor local. O navegador recebe apenas uma conexão temporária de uso único.</p>
+<button id="connectAccount" class="secondary" type="submit">Conectar conta demo</button>
+</fieldset></form>
+<p class="muted">A conta demo é localizada automaticamente a partir de DERIV_APP_ID e DERIV_TOKEN no arquivo .env. Use uma aplicação PAT e um token da API atual em <a href="https://developers.deriv.com" target="_blank" rel="noopener noreferrer">developers.deriv.com</a>. IDs de aplicações da API antiga não funcionam aqui. Contas MT5 não são contas Options.</p>
+<p id="accountStatus" role="status">Conta desconectada.</p>
+<fieldset id="automationSettings" class="automation-fields"><legend>Regras da sessão</legend>
+<div class="field"><label for="auto-stake">Entrada (moeda da conta)</label><input id="auto-stake" type="number" min="0.01" step="0.01" value="1"></div>
+<div class="field"><label for="auto-stopLoss">Limite de perda</label><input id="auto-stopLoss" type="number" min="0.01" step="0.01" value="5"></div>
+<div class="field"><label for="auto-takeProfit">Meta de ganho</label><input id="auto-takeProfit" type="number" min="0.01" step="0.01" value="5"></div>
+<div class="field"><label for="auto-maxTrades">Máximo de operações</label><input id="auto-maxTrades" type="number" min="1" max="100" step="1" value="10"></div>
+<div class="field"><label for="auto-duration">Duração do contrato (min)</label><input id="auto-duration" type="number" min="1" max="60" step="1" value="1"></div>
+<div class="field"><label for="auto-minADX">ADX mínimo</label><input id="auto-minADX" type="number" min="1" max="100" value="25"></div>
+</fieldset>
+<p class="muted">Uma operação por vez. A perda considera também o valor da próxima entrada. Parar impede novas compras e acompanha a operação já enviada até a liquidação. Mantenha esta página e o computador ativos; fechar a página interrompe o robô, mas não cancela contratos na Deriv.</p>
+<div class="deriv-controls"><button id="startAutomation" class="primary" disabled>Iniciar sessão demo</button><button id="stopAutomation" class="secondary" disabled>Parar novas entradas</button><button id="disconnectAccount" class="secondary" disabled>Desconectar</button></div>
+<p id="automationStatus" role="status" aria-live="polite">Aguardando conexão.</p><p id="automationTotals" class="muted">Operações: 0 · Resultado da sessão: 0</p>
+<details><summary>Conferir compra pendente após interrupção</summary><p class="muted">Se houve compra sem confirmação, confira o histórico e as posições na plataforma Deriv. Este botão só libera uma nova sessão depois que você confirmar a conferência e a API não apontar posições abertas.</p><label><input type="checkbox" id="pendingChecked"> Conferi o histórico e as posições na Deriv.</label> <button id="clearPending" class="secondary" disabled>Concluir conferência</button></details>
+<details><summary>Eventos da automação</summary><ol id="automationLog" class="automation-log"></ol></details>
+</section>
+<div id="message" class="message" role="status" hidden></div>
+<div class="workspace">
+<aside class="settings panel" aria-label="Configurações da análise">
+<div class="section-head"><h2>Dados e parâmetros</h2><span class="tiny-tag">01</span></div>
+<div class="source-block"><span class="label">Fonte da amostra</span><strong id="sourceName">Série matemática</strong><span id="sourceDetail" class="muted">Exemplo didático • sem ativo real</span></div>
+<div class="field"><label for="assetInput">Ativo / moeda do arquivo</label><input id="assetInput" type="text" maxlength="60" placeholder="Informe o nome ou símbolo" disabled><small id="assetHelp">O exemplo não corresponde a uma moeda real.</small></div>
+<div class="field"><label for="loadCount">Candles para calcular</label><input id="loadCount" type="number" value="360" min="0" max="10000" step="1"><small>Zero deixa a análise sem dados.</small></div>
+<div class="field"><label for="displayCount">Candles no gráfico</label><select id="displayCount"><option value="50">Últimos 50</option><option value="100" selected>Últimos 100</option><option value="200">Últimos 200</option><option value="500">Últimos 500</option></select></div>
+<div class="settings-divider"></div>
+<div class="section-head"><h2>Indicadores</h2><button id="resetConfig" class="text-button">Restaurar</button></div>
+<form id="configForm" novalidate><div id="indicatorSettings"></div><button class="apply" type="submit">Aplicar parâmetros</button><p id="configError" class="error-text" role="alert"></p></form>
+<button id="demoButton" class="secondary full">Recarregar exemplo</button>
+<p class="local-note">O CSV é processado neste navegador. A amostra e as leituras desta sessão são apagadas ao recarregar a página.</p>
+</aside>
+<div class="analysis">
+<section class="metrics" aria-label="Valores da amostra" id="metrics"></section>
+<section class="panel price-panel"><div class="chart-heading"><div><p class="eyebrow">SÉRIE HISTÓRICA · UTC</p><h2 id="chartTitle">Candles da amostra</h2></div><span class="badge" id="dataBadge">Exemplo didático</span></div><div class="asset-identity"><div><span class="label">ATIVO / MOEDA</span><strong id="assetName">Série matemática · sem moeda real</strong></div><span id="assetOrigin">Exemplo didático gerado no painel</span></div><div class="legend" id="priceLegend"></div><div id="priceChart" class="price-chart"></div><div class="cursor-controls"><label for="cursor">Candle analisado <strong id="cursorValue"></strong></label><input type="range" id="cursor" min="1" max="360" value="360"><div class="cursor-meta"><span id="cursorDate"></span><button id="latestButton" class="text-button">Último candle</button></div></div></section>
+<section class="reading panel"><div><p class="eyebrow">LEITURA DA AMOSTRA</p><h2 id="readingTitle">Cálculos disponíveis</h2><p id="readingText"></p></div><div class="reading-note">Concordância entre indicadores não é probabilidade de acerto. Esta leitura descritiva não prevê resultados. A automação demo utiliza as regras exibidas na seção de operações.</div></section>
+<section class="indicator-charts" id="indicatorCharts" aria-label="Gráficos dos indicadores"></section>
+<section class="panel anatomy-panel"><div class="section-head"><h2>Estrutura do candle selecionado</h2><span class="muted">Proporções observadas</span></div><div id="anatomy"></div></section>
+<section class="panel"><div class="section-head"><div><p class="eyebrow">CONFERÊNCIA</p><h2>Leituras da sessão</h2></div><button id="saveReading" class="secondary">Registrar leitura</button></div><p class="muted history-description">Guarde os valores e parâmetros atuais para comparar nesta sessão.</p><div class="table-scroll"><table><thead><tr><th>Registrada em</th><th>Ativo / moeda</th><th>Amostra</th><th>Candles</th><th>EMA</th><th>RSI</th><th>ATR</th><th>Parâmetros</th></tr></thead><tbody id="historyBody"><tr><td colspan="8" class="empty-cell">Nenhuma leitura registrada.</td></tr></tbody></table></div></section>
+<footer>Prisma <span>Fórmulas determinísticas · OHLC histórico · Horários em UTC</span></footer>
+</div></div>
+</main>
+<dialog id="methodDialog" aria-labelledby="methodTitle"><div class="dialog-head"><h2 id="methodTitle">Como ler este laboratório</h2><button id="closeMethod" class="close-button" aria-label="Fechar explicação">×</button></div><div class="dialog-content"><p>O exemplo inicial é uma série matemática de 360 intervalos. Não representa cotações, uma conta ou operações.</p><h3>Importação de candles</h3><p>Use CSV com <code>timestamp,open,high,low,close</code> e, opcionalmente, <code>volume</code>. Aceita vírgula ou ponto e vírgula como separador. Com ponto e vírgula, os números também podem usar vírgula decimal.</p><p>Informe horários Unix (segundos ou milissegundos) ou ISO com fuso, como <code>2026-01-05T09:00:00Z</code>. Cada linha deve representar um candle encerrado. Até 10.000 linhas e 3 MB. Duplicatas e valores inconsistentes são recusados; lacunas são sinalizadas.</p><p>Após importar, informe o ativo no campo “Ativo / moeda do arquivo”. A identificação é declarada por você, não é deduzida dos preços ou do nome do arquivo. Cada nova importação limpa esse campo. As leituras registradas conservam a identificação do momento do registro.</p><h3>Convenções dos cálculos</h3><ul><li>EMA: média exponencial iniciada pela média simples dos primeiros N fechamentos.</li><li>RSI, ATR e DMI/ADX: suavização de Wilder. RSI de série constante é exibido como 50. ATR precisa de um fechamento anterior.</li><li>MACD: diferença entre duas EMAs, com EMA de sinal e histograma da diferença.</li><li>Bollinger: média simples e desvio padrão populacional dos fechamentos.</li><li>VWAP: aproximação por candles, com preço típico (H + L + C) / 3 e volume informado no CSV. Reinício às 00:00 UTC; uma sessão incompleta produz um VWAP parcial.</li><li>Session Volume Profile: indisponível. OHLCV não informa a distribuição real do volume por preço; o painel não inventa essa distribuição.</li><li>Candles: decomposição geométrica de corpo e sombras. Não indica uma operação.</li></ul><h3>Dados necessários</h3><p>Sem observações suficientes, o indicador mostra “aguardando dados”. O primeiro valor calculável pode depender bastante da inicialização. Mudar a janela inicial altera essa referência.</p><h3>Interpretação</h3><p>ATR descreve amplitude, ADX descreve força direcional e RSI resume variações dos fechamentos. Suas escalas não são probabilidades. Os parâmetros iniciais são exemplos editáveis, sem otimização ou promessa de desempenho.</p><p>O seletor temporal utiliza somente candles até o ponto escolhido. A busca na Deriv consulta a API pública e carrega candles fechados do ativo com maior ADX (14), usando 500 candles por ativo no intervalo escolhido. O ranking compara exclusivamente Continuous Volatility Indices, Jump Indices e Step Indices abertos, com histórico suficiente e atualizado no horário de corte. Os parâmetros do ranking são fixos; os indicadores do painel continuam configuráveis. A seção de automação executa contratos de Alta/Baixa apenas em conta demo, quando conectada e iniciada por você.</p></div></dialog>
+</body></html>
