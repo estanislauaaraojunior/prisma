@@ -69,11 +69,34 @@ A regra da automação fica em `dist/automation.mjs` e reutiliza os cálculos de
 
 Para cada candidato, a automação calcula ADX/DMI com os parâmetros padrão e aplica o ADX mínimo configurado na sessão. Quando +DI é maior que -DI e o fechamento está acima da EMA, a direção elegível é Alta (`CALL`). Quando -DI é maior que +DI e o fechamento está abaixo da EMA, a direção elegível é Baixa (`PUT`). Caso contrário, não há entrada.
 
-A busca retorna os ativos ordenados pelo maior ADX. A automação percorre esse ranking e tenta o primeiro candidato que tenha sinal válido e contrato de Alta/Baixa compatível com a duração configurada. Não há score composto, MACD/RSI/Bollinger/ATR como filtros de entrada, reconhecimento de padrões, backtest de rentabilidade ou cálculo de probabilidade de acerto.
+A busca inicial retorna os ativos ordenados pelo maior ADX. A automação percorre esse ranking e tenta o primeiro candidato que tenha sinal válido e contrato de Alta/Baixa compatível com a duração configurada. Depois que um contrato é liquidado, a automação reavalia primeiro o mesmo símbolo; se ADX/DMI e preço continuarem validando a mesma direção, ela mantém o símbolo e abre a próxima entrada nele. O ranking completo só é consultado novamente quando a tendência fica contrária, perde força suficiente para o ADX mínimo ou deixa de ter contrato compatível. Não há score composto, MACD/RSI/Bollinger/ATR como filtros de entrada, reconhecimento de padrões, backtest de rentabilidade ou cálculo de probabilidade de acerto.
 
 Mantidos: início manual em conta demo, entrada fixa, sem martingale, uma operação por vez, uma entrada por candle, validação de contrato/duração, saldo, cotação e limites da sessão. Padrões: ADX mínimo 25, entrada 1, duração 1 minuto, perda máxima 5, meta 5 e máximo 10 contratos. Reiniciar manualmente zera os contadores da sessão.
 
 Os testes verificam cálculos, autenticação, bloqueios e fluxo de compra com dados artificiais; não medem probabilidade de acerto. Não foi acrescentado volume/VWAP à decisão porque a integração não fornece volume.
+
+### Fluxo de abertura de contratos
+
+A compra é sempre iniciada pelo usuário, depois da conexão demo e do clique em **Iniciar sessão demo**. O botão de conexão apenas autentica e consulta saldo; ele não abre contratos.
+
+1. A interface cria um bloqueio com Web Locks para a chave da conta demo. Esse bloqueio evita duas sessões na mesma conta, aba/origem e navegador.
+2. O motor valida os limites informados: entrada, perda máxima, meta, quantidade máxima de operações, duração em minutos e ADX mínimo.
+3. Antes de procurar sinal, consulta `portfolio`. Se existir contrato aberto na conta demo, a sessão é recusada.
+4. O motor aguarda um candle novo de 1 minuto. Ele não abre mais de uma entrada no mesmo candle de corte.
+5. Se já houve uma compra liquidada na sessão, o sistema tenta primeiro reavaliar o mesmo símbolo pelo histórico público atualizado. Se a direção continuar igual, o ADX ainda respeitar o mínimo e houver contrato compatível, o símbolo é mantido.
+6. Quando não há símbolo mantido, a busca pública percorre Continuous Volatility, Jump e Step, ordena por ADX e testa os candidatos nessa ordem.
+7. O sinal elegível é `CALL` quando `+DI > -DI` e o fechamento está acima da EMA. O sinal elegível é `PUT` quando `-DI > +DI` e o fechamento está abaixo da EMA. Fora dessas condições, não há entrada.
+8. Para o candidato com sinal, a conta autenticada consulta `contracts_for`. A compra só segue se houver contrato intraday do tipo `CALL` ou `PUT` que cubra a duração configurada.
+9. Antes da cotação, o motor consulta novamente `portfolio` e depois `balance`. A moeda retornada precisa ser a mesma moeda da conexão e o saldo precisa cobrir a entrada.
+10. A cotação é solicitada com `proposal`, usando `amount` igual à entrada, `basis: "stake"`, `duration_unit: "m"`, o tipo `CALL`/`PUT` e o símbolo escolhido.
+11. A cotação precisa ter ID, preço válido, preço menor ou igual à entrada e `spot_time` recente. O sistema consulta `time` novamente e descarta a entrada se o candle mudou ou se a cotação ficou velha.
+12. Antes de enviar `buy`, grava em `localStorage` um marcador pendente com conta, símbolo, tipo, entrada, horário e `contractId: null`.
+13. A compra é enviada uma única vez com `buy` igual ao ID da cotação e `price` igual à entrada configurada.
+14. Se a Deriv confirma a compra, o `contract_id` é salvo no mesmo marcador, o contador de operações aumenta e o gráfico da página é atualizado com os candles do símbolo comprado.
+15. O contrato é acompanhado com `proposal_open_contract` até `is_sold` ser `1`. Ao liquidar, o lucro/prejuízo é somado ao resultado da sessão e a pendência local é removida.
+16. A sessão continua somente se ainda estiver dentro dos limites de perda, meta e quantidade máxima. Caso contrário, encerra novas entradas.
+
+Se `buy` falhar com uma recusa explícita da API, a pendência local é removida porque a compra foi rejeitada. Se houver timeout, queda de conexão ou resposta incerta, a pendência permanece e o sistema não repete a ordem automaticamente. A liberação exige conferência manual na Deriv pela seção **Conferir compra pendente após interrupção**.
 
 ### Parada, falhas e pendências
 
