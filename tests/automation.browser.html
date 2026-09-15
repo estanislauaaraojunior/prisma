@@ -204,11 +204,22 @@ try{
   const f=fixture({portfolio:async()=>({portfolio:{contracts:[{contract_id:9}]}})});
   await rejects(()=>f.engine.run(config),/contratos abertos/);ok(!f.requests.some(p=>p.buy),'Ignorou posição');
  });
- await test('Compra incerta mantém bloqueio e não repete',async()=>{
+ await test('Compra incerta mantém pendência até a próxima conferência',async()=>{
   const f=fixture({buy:async()=>{throw new Error('Timeout')}});
   await rejects(()=>f.engine.run(config),/Timeout/);
   ok(f.engine.pending()!==null,'Perdeu compra incerta');
-  await rejects(()=>f.engine.run(config),/pendente/);
+  await f.engine.run(config);
+  ok(!f.engine.pending(),'Pendência órfã não foi liberada');
+  ok(f.requests.filter(p=>p.buy).length===2,'Não reiniciou após carteira vazia');
+ });
+ await test('Compra incerta com posição aberta continua bloqueada',async()=>{
+  let open = false;
+  const f=fixture({
+   buy:async()=>{open = true; throw new Error('Timeout')},
+   portfolio:async()=>({portfolio:{contracts:open?[{contract_id:123}]:[]}})
+  });
+  await rejects(()=>f.engine.run(config),/Timeout/);
+  await rejects(()=>f.engine.run(config),/contratos abertos/);
   ok(f.requests.filter(p=>p.buy).length===1,'Reenviou compra');
  });
  await test('Recusa explícita não deixa compra pendente',async()=>{
@@ -290,6 +301,11 @@ try{
   ok(buys===1,'Número de compras incorreto: '+buys+' / '+doc.getElementById('automationStatus').textContent);
   ok(doc.getElementById('automationTotals').textContent.includes('0.95 USD'),'Resultado não exibido');
   ok(!doc.getElementById('automationSettings').disabled,'Configuração não liberada');
+  Object.defineProperty(win.navigator,'locks',{configurable:true,value:undefined});
+  doc.getElementById('startAutomation').click();
+  for(let i=0;i<100&&doc.getElementById('startAutomation').disabled;i++)await new Promise(r=>setTimeout(r,10));
+  ok(buys===2,'Fallback sem Web Locks não iniciou sessão demo');
+  ok(!win.localStorage.getItem('prisma-session-lock:prisma-demo:DEMO123'),'Fallback deixou bloqueio preso');
   let release;
   Object.defineProperty(win.navigator,'locks',{configurable:true,value:{request:(name,options,callback)=>new Promise(resolve=>{release=()=>resolve(callback({name}))})}});
   doc.getElementById('startAutomation').click();

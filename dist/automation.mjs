@@ -92,6 +92,18 @@ export class DemoAutomation {
     this.storage.removeItem(this.key);
     this.emit('Conferência confirmada. A próxima execução inicia uma nova sessão.');
   }
+  async reconcilePendingBeforeRun() {
+    const pending = this.pending();
+    if (!pending) return;
+    this.emit('Verificando pendência local antes de iniciar nova sessão.');
+    if (pending.contractId) {
+      const response = await this.client.request({proposal_open_contract:1,contract_id:pending.contractId});
+      if (String(response.proposal_open_contract?.contract_id)!==String(pending.contractId) || Number(response.proposal_open_contract?.is_sold)!==1) throw new Error('O contrato registrado ainda não foi liquidado.');
+    }
+    await this.emptyPortfolio();
+    this.storage.removeItem(this.key);
+    this.emit('Pendência local liberada: não há contrato aberto na conta demo.');
+  }
   async monitor(record) {
     while (true) {
       const response = await this.client.request({proposal_open_contract:1,contract_id:record.contractId});
@@ -133,7 +145,7 @@ export class DemoAutomation {
   async run(input) {
     if (this.busy) throw new Error('A sessão já está em execução.');
     const config = validateAutomation(input);
-    if (this.pending()) throw new Error('Existe uma compra pendente de conferência. Verifique-a na Deriv antes de iniciar outra sessão.');
+    await this.reconcilePendingBeforeRun();
     this.busy = this.running = true;
     this.profit = this.trades = 0;
     const usedBoundaries = new Set();

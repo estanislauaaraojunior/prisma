@@ -7,6 +7,16 @@ import {fileURLToPath} from 'node:url';
 const DERIV_API = 'https://api.derivws.com/trading/v1/options/accounts';
 const base = fileURLToPath(new URL('.', import.meta.url));
 const publicDir = resolve(base, 'dist');
+const SESSION_TTL = 5 * 60 * 1000;
+let automationState = {
+  running: false,
+  message: 'Nenhuma sessão demo ativa.',
+  trades: 0,
+  profit: 0,
+  currency: '',
+  updatedAt: 0,
+  events: []
+};
 
 const types = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -40,6 +50,46 @@ function sendJson(response, status, body) {
     'Content-Length': Buffer.byteLength(payload)
   });
   response.end(payload);
+}
+
+function publicState() {
+  if (automationState.running && Date.now() - automationState.updatedAt > SESSION_TTL) {
+    automationState = {...automationState, running:false, message:'Sessão sem atualização recente.', updatedAt:Date.now()};
+  }
+  return automationState;
+}
+
+function readJson(request) {
+  return new Promise((resolve, reject) => {
+    let text = '';
+    request.on('data', chunk => {
+      text += chunk;
+      if (text.length > 8192) {
+        request.destroy();
+        reject(new Error('Payload muito grande.'));
+      }
+    });
+    request.on('end', () => {
+      try { resolve(text ? JSON.parse(text) : {}); }
+      catch { reject(new Error('JSON inválido.')); }
+    });
+    request.on('error', reject);
+  });
+}
+
+function cleanEvent(body) {
+  const message = typeof body.message === 'string' ? body.message.trim().slice(0, 240) : '';
+  if (!message) throw new Error('Evento sem mensagem.');
+  return {
+    id: `${Date.now()}:${Math.random().toString(36).slice(2)}`,
+    time: Date.now(),
+    message,
+    trades: Number.isFinite(Number(body.trades)) ? Number(body.trades) : 0,
+    profit: Number.isFinite(Number(body.profit)) ? Number(body.profit) : 0,
+    currency: typeof body.currency === 'string' ? body.currency.slice(0, 12) : '',
+    running: Boolean(body.running),
+    accountId: typeof body.accountId === 'string' ? body.accountId.replace(/[^A-Za-z0-9]/g, '').slice(0, 24) : ''
+  };
 }
 
 async function derivRequest(url, method, appId, token) {
@@ -102,6 +152,33 @@ async function handleAccountSocket(_request, response) {
   }
 }
 
+async function handleAutomationSession(request, response) {
+  if (request.method === 'GET') {
+    sendJson(response, 200, publicState());
+    return;
+  }
+  if (request.method !== 'POST') {
+    sendJson(response, 405, {error: 'Método não permitido.'});
+    return;
+  }
+  try {
+    const event = cleanEvent(await readJson(request));
+    automationState = {
+      running: event.running,
+      message: event.message,
+      trades: event.trades,
+      profit: event.profit,
+      currency: event.currency,
+      accountId: event.accountId,
+      updatedAt: event.time,
+      events: [event, ...automationState.events].slice(0, 80)
+    };
+    sendJson(response, 200, automationState);
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
+  }
+}
+
 function safeStaticPath(pathname) {
   const decoded = decodeURIComponent(pathname);
   if (decoded.startsWith('/tests/')) {
@@ -152,6 +229,10 @@ const port = parsePort();
 const server = createServer((request, response) => {
   if (request.method === 'POST' && request.url?.split('?')[0] === '/api/deriv/account-socket') {
     handleAccountSocket(request, response);
+    return;
+  }
+  if (request.url?.split('?')[0] === '/api/automation/session') {
+    handleAutomationSession(request, response);
     return;
   }
   if (request.method === 'GET' || request.method === 'HEAD') {

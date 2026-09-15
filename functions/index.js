@@ -4,9 +4,41 @@ const {defineSecret} = require('firebase-functions/params');
 const DERIV_API = 'https://api.derivws.com/trading/v1/options/accounts';
 const derivAppId = defineSecret('DERIV_APP_ID');
 const derivToken = defineSecret('DERIV_TOKEN');
+const SESSION_TTL = 5 * 60 * 1000;
+let automationState = {
+  running: false,
+  message: 'Nenhuma sessão demo ativa.',
+  trades: 0,
+  profit: 0,
+  currency: '',
+  updatedAt: 0,
+  events: []
+};
 
 function sendJson(response, status, body) {
   response.status(status).set('Cache-Control', 'no-store').json(body);
+}
+
+function publicState() {
+  if (automationState.running && Date.now() - automationState.updatedAt > SESSION_TTL) {
+    automationState = {...automationState, running:false, message:'Sessão sem atualização recente.', updatedAt:Date.now()};
+  }
+  return automationState;
+}
+
+function cleanEvent(body) {
+  const message = typeof body.message === 'string' ? body.message.trim().slice(0, 240) : '';
+  if (!message) throw new Error('Evento sem mensagem.');
+  return {
+    id: `${Date.now()}:${Math.random().toString(36).slice(2)}`,
+    time: Date.now(),
+    message,
+    trades: Number.isFinite(Number(body.trades)) ? Number(body.trades) : 0,
+    profit: Number.isFinite(Number(body.profit)) ? Number(body.profit) : 0,
+    currency: typeof body.currency === 'string' ? body.currency.slice(0, 12) : '',
+    running: Boolean(body.running),
+    accountId: typeof body.accountId === 'string' ? body.accountId.replace(/[^A-Za-z0-9]/g, '').slice(0, 24) : ''
+  };
 }
 
 async function derivRequest(url, method, appId, token) {
@@ -74,5 +106,36 @@ exports.derivAccountSocket = onRequest({
     } else {
       sendJson(response, 400, {error: error.message});
     }
+  }
+});
+
+exports.automationSession = onRequest({
+  region: 'us-central1',
+  cors: false,
+  maxInstances: 1
+}, async (request, response) => {
+  if (request.method === 'GET') {
+    sendJson(response, 200, publicState());
+    return;
+  }
+  if (request.method !== 'POST') {
+    sendJson(response, 405, {error: 'Método não permitido.'});
+    return;
+  }
+  try {
+    const event = cleanEvent(request.body || {});
+    automationState = {
+      running: event.running,
+      message: event.message,
+      trades: event.trades,
+      profit: event.profit,
+      currency: event.currency,
+      accountId: event.accountId,
+      updatedAt: event.time,
+      events: [event, ...automationState.events].slice(0, 80)
+    };
+    sendJson(response, 200, automationState);
+  } catch (error) {
+    sendJson(response, 400, {error: error.message});
   }
 });
